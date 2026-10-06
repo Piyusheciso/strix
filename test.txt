@@ -1,0 +1,39 @@
+1. Solving Tool Schema Overhead (~21,000 $\rightarrow$ ~800 tokens)
+ Tool Registration via Meta-Tools (Just-In-Time Loading)
+Instead of attaching all 43 tool definitions to the LLM API request's tools array, expose only two meta-tools:
+
+B. Index-Only Summaries
+If the agent must know what knowledge is available upfront, provide a brief, bulleted index rather than full content:
+
+text
+Available Guides:
+- browser_automation: Headless browser control and DOM queries.
+- static_analysis: AST parsing and code search techniques.
+- report_formatting: Schema rules for submitting final findings.
+This conveys discovery capability in < 100 tokens instead of 20,000.
+
+search_tools(query: str): Searches an external registry and returns lightweight summaries ({"name": "...", "description": "..."}).
+call_tool(name: str, arguments: dict): Executes the tool by looking it up in the registry.
+The LLM queries what it needs, and the schemas never bloat the global prompt.
+
+Phase-Based Prompt Transitions
+Instead of one massive prompt covering Discovery, Analysis, and Reporting simultaneously, use an external state machine:
+
+State 1: Discovery: The agent runs with a 500-token prompt focused only on discovery.
+State 2: Deep Dive: When findings are discovered, hand off the state checkpoint to a new session with an execution-focused prompt.
+State 3: Reporting: Final phase uses a dedicated reporting prompt.
+4. How the Lifecycle Runs Within 16k Tokens
+With the baseline reduced to ~2,000 tokens:
+
+[0 tokens] ───────────────────────────────────────────────────────── [16,384 tokens]
+ ├── Base Prompt + Meta-tools (~2,000 tok)
+ │
+ ├── Usable Workspace: Turns, Tool Results, Scratchpad (~10,000 tok)
+ │
+ ├── Compaction Threshold (Trigger at ~12,000 tok)
+ │    └── Save state to disk/checkpoint & reset conversation window
+ │
+ └── Model Completion Reserve (~4,000 tok)
+Turn 1 succeeds: Only ~2,000 tokens are sent; well below the 16k ceiling.
+Execution progresses: The conversation grows over several turns as tools are searched, retrieved, and run.
+Compaction kicks in: When usage hits the threshold (~12,000 tokens), the session manager summarizes progress, preserves key state variables in a clean checkpoint, and resets message history—keeping the agent operating indefinitely within 16k tokens.

@@ -131,6 +131,14 @@ class ContextSettings(BaseSettings):
     tool_output_max_bytes: int = Field(
         default=50 * 1024, ge=1024, alias="STRIX_TOOL_OUTPUT_MAX_BYTES"
     )
+    # Meta-tools: JIT tool schema loading via search_tools/get_tool_schema/call_tool.
+    # When enabled, only ~5 meta-tool schemas are sent to the LLM instead of ~43,
+    # reducing per-turn tool overhead from ~21,000 tokens to ~300 tokens.
+    meta_tools_enabled: bool = Field(default=False, alias="STRIX_META_TOOLS")
+    # Phase-based prompt transitions: Discovery → Deep Dive → Reporting.
+    # When enabled, the system prompt is swapped to a lean, phase-specific variant
+    # (~500 tokens) instead of the full combined prompt.
+    phase_transitions_enabled: bool = Field(default=False, alias="STRIX_PHASE_TRANSITIONS")
 
 
 class RuntimeSettings(BaseSettings):

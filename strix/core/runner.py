@@ -482,6 +482,7 @@ async def run_strix_scan(
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
+            use_meta_tools=settings.context.meta_tools_enabled,
         )
 
         if not is_resume:
@@ -501,6 +502,7 @@ async def run_strix_scan(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=scope_context,
+            use_meta_tools=settings.context.meta_tools_enabled,
         )
 
         async def spawn_child_agent(**kwargs: Any) -> dict[str, Any]:

@@ -18,6 +18,8 @@ from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
+from strix.tools.meta_tools.registry import MetaToolRegistry
+from strix.tools.meta_tools.tools import META_TOOLS, set_active_registry
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -670,6 +672,7 @@ def build_strix_agent(
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
+    use_meta_tools: bool = False,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -682,6 +685,11 @@ def build_strix_agent(
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
+        use_meta_tools: When ``True``, register bulk tools in a
+            :class:`MetaToolRegistry` and expose only the three meta-tools
+            (``search_tools``, ``get_tool_schema``, ``call_tool``) plus
+            lifecycle tools to the LLM. Reduces per-turn tool overhead from
+            ~21,000 tokens to ~300 tokens.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -700,10 +708,37 @@ def build_strix_agent(
     if interactive:
         # Yielding to the user is only meaningful when one is attached.
         agent_tools.append(wait_for_user)
-    if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
+
+    if use_meta_tools:
+        # -- Meta-tools mode: register bulk tools externally, expose only
+        # the 3 meta-tools + essential lifecycle tools to the LLM.
+        registry = MetaToolRegistry()
+        bulk_tools: list[Tool] = [*_BASE_TOOLS, *agent_tools]
+        registry.register_many(bulk_tools)
+        set_active_registry(registry)
+
+        # Lifecycle tools stay in the LLM context so finish_scan / agent_finish
+        # is always callable without a search roundtrip.
+        lifecycle_tool: Tool = finish_scan if is_root else agent_finish
+        # think is always directly available (zero-overhead reasoning aid).
+        tools: list[Tool] = [think, *META_TOOLS, lifecycle_tool]
+
+        # Inject a compact tool index into the instructions so the LLM knows
+        # what is available without seeing full schemas.
+        tool_index = registry.build_index()
+        instructions = f"{instructions}\n\n{tool_index}"
+        logger.info(
+            "Meta-tools mode: registered %d tools in external registry, "
+            "exposing %d tools to LLM",
+            registry.tool_count,
+            len(tools),
+        )
     else:
-        tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
+        if is_root:
+            tools = [*_BASE_TOOLS, *agent_tools, finish_scan]
+        else:
+            tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
+
     _ensure_unique_tool_names(tools)
     tools = [
         _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
@@ -713,13 +748,14 @@ def build_strix_agent(
     ]
 
     logger.info(
-        "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",
+        "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s, meta_tools=%s)",
         "root" if is_root else "child",
         name,
         len(skills or []),
         len(tools),
         scan_mode,
         is_whitebox,
+        use_meta_tools,
     )
 
     return SandboxAgent(
@@ -754,6 +790,7 @@ def make_child_factory(
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
+    use_meta_tools: bool = False,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -774,6 +811,7 @@ def make_child_factory(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
+            use_meta_tools=use_meta_tools,
         )
 
     return _factory
